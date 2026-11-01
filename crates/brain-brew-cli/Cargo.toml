@@ -45,7 +45,7 @@ crossterm = "0.28"
 flate2 = "1"
 fs2 = "0.4"
 include_dir = "0.7"
-nix-nar = "0.4"
+nix-nar = "0.6"
 brain-brew-core.workspace = true
 brain-brew-formats.workspace = true
 serde = { version = "1", features = ["derive"] }
