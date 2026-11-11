@@ -26,6 +26,11 @@ class YamlVerifier:
     def get_instance() -> 'YamlVerifier':
         return YamlVerifier.__instance
 
+    @staticmethod
+    def clear_instance():
+        if YamlVerifier.__instance:
+            YamlVerifier.__instance = None
+
     def verify_recipe(self, filename):
         data = yamale.make_data(filename)
         try:
