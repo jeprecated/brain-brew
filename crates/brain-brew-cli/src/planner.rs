@@ -7,9 +7,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use brain_brew_core::{CanonicalDeck, ChangeIntent, FieldValue, Overlay, OverlayKind, StableId};
-use brain_brew_formats::canonical_source_document::NoteAuthoringProvenance;
+use brain_brew_formats::canonical_source_document::{
+    CanonicalSourceDocument, NoteAuthoringProvenance,
+};
 use brain_brew_formats::csv_note_source::CsvTranslationAuthoringProvenance;
 use brain_brew_formats::manifest::{self, FederatedDeckManifest};
 use brain_brew_formats::media;
@@ -233,6 +236,9 @@ pub(crate) struct ManifestRegistry {
     manifests: Vec<RegistryManifest>,
     packages: BTreeMap<String, usize>,
     discovery_stats: DiscoveryStats,
+    /// Base decks decoded so far, keyed by authorized file; every target of a
+    /// manifest plans from the same base.
+    base_documents: Mutex<BTreeMap<PathBuf, Arc<CanonicalSourceDocument>>>,
 }
 
 impl ManifestRegistry {
@@ -394,7 +400,33 @@ impl ManifestRegistry {
             manifests,
             packages,
             discovery_stats: discovery.stats,
+            base_documents: Mutex::default(),
         })
+    }
+
+    /// The decoded base deck at the authorized `base_path` of `loaded`.
+    ///
+    /// The cache stays locked while decoding, so concurrent plans of the same
+    /// manifest wait for one decode instead of repeating it.
+    fn base_document(
+        &self,
+        loaded: &RegistryManifest,
+        base_path: &Path,
+    ) -> Result<Arc<CanonicalSourceDocument>, String> {
+        let mut documents = self
+            .base_documents
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(document) = documents.get(base_path) {
+            return Ok(Arc::clone(document));
+        }
+        let document = Arc::new(canonical_document_from_package(
+            base_path,
+            &loaded.root,
+            &loaded.include_roots,
+        )?);
+        documents.insert(base_path.to_path_buf(), Arc::clone(&document));
+        Ok(document)
     }
 
     pub(crate) fn manifests(&self) -> &[RegistryManifest] {
@@ -416,8 +448,7 @@ impl ManifestRegistry {
         let mut sources = BTreeMap::<PathBuf, SourceProvenance>::new();
         for loaded in &self.manifests {
             let base_path = authorize_manifest_path(loaded, "base", &loaded.manifest.base)?;
-            let base_document =
-                canonical_document_from_package(&base_path, &loaded.root, &loaded.include_roots)?;
+            let base_document = self.base_document(loaded, &base_path)?;
             let source = source_provenance(loaded, base_path.clone(), PlanSourceKind::Base)?;
             sources.insert(source.path.clone(), source);
             for include in included_provenance(loaded, base_document.included_sources())?
@@ -496,11 +527,7 @@ impl ManifestRegistry {
             .ok_or_else(|| format!("target {selected_qualified} did not select a base source"))?;
         let base_loaded = &self.manifests[base_manifest_index];
         let base_path = authorize_manifest_path(base_loaded, "base", &base_loaded.manifest.base)?;
-        let base_document = canonical_document_from_package(
-            &base_path,
-            &base_loaded.root,
-            &base_loaded.include_roots,
-        )?;
+        let base_document = self.base_document(base_loaded, &base_path)?;
         let base = base_document.resolved_deck().clone();
         let base_note_authoring_provenance = base_document.authoring_provenance().clone();
         let base_media_asset_sources = base_document.media_asset_sources().clone();
