@@ -13,13 +13,13 @@ use brain_brew_formats::canonical_source_document::NoteAuthoringProvenance;
 use brain_brew_formats::csv_note_source::CsvTranslationAuthoringProvenance;
 use brain_brew_formats::manifest::{self, FederatedDeckManifest};
 use brain_brew_formats::media;
-use brain_brew_formats::overlay_source_document::OverlaySourceDocument;
 use brain_brew_formats::source_document::{
     IncludedSourceKind, SourceProvenance as DocumentProvenance,
 };
 use sha2::{Digest, Sha256};
 
 use crate::commands::lock::locked_package_manifest_paths;
+use crate::concurrency::map_in_order;
 use crate::io::{
     canonical_document_from_package, include_roots_from_manifest, manifest_root,
     overlay_document_from_package, overlay_document_from_package_with_source_decks,
@@ -999,11 +999,15 @@ fn validate_overlay_catalogs(manifests: &[RegistryManifest]) -> Result<(), Strin
                 })
         })
         .collect::<Vec<_>>();
-    let mut decoded = decode_catalog_overlays(
+    // Decoding dominates registry loading and each overlay decodes independently
+    // from read-only files, so authorized overlays decode concurrently; the walk
+    // below checks them in catalog order, so the first reported error is unchanged.
+    let mut decoded = map_in_order(
         &entries
             .iter()
             .filter_map(|(loaded, _, _, file)| Some((*loaded, file.as_ref().ok()?.as_path())))
             .collect::<Vec<_>>(),
+        |(loaded, file)| overlay_document_from_package(file, &loaded.root, &loaded.include_roots),
     )
     .into_iter();
     let mut source_identities = BTreeMap::<PathBuf, String>::new();
@@ -1058,56 +1062,6 @@ fn validate_overlay_catalogs(manifests: &[RegistryManifest]) -> Result<(), Strin
         }
     }
     Ok(())
-}
-
-/// Decode catalog overlays concurrently, returning results in input order.
-///
-/// Decoding dominates registry loading and each overlay decodes independently
-/// from read-only files, so workers share the queue. Callers check results in
-/// catalog order, so the first reported error is the one a sequential walk
-/// would reach.
-fn decode_catalog_overlays(
-    overlays: &[(&RegistryManifest, &Path)],
-) -> Vec<Result<OverlaySourceDocument, String>> {
-    let decode = |(loaded, file): &(&RegistryManifest, &Path)| {
-        overlay_document_from_package(file, &loaded.root, &loaded.include_roots)
-    };
-    let workers = std::thread::available_parallelism()
-        .map_or(1, std::num::NonZeroUsize::get)
-        .min(overlays.len());
-    if workers <= 1 {
-        return overlays.iter().map(decode).collect();
-    }
-    let next = std::sync::atomic::AtomicUsize::new(0);
-    let mut results = (0..overlays.len()).map(|_| None).collect::<Vec<_>>();
-    std::thread::scope(|scope| {
-        let handles = (0..workers)
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut done = Vec::new();
-                    loop {
-                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(overlay) = overlays.get(index) else {
-                            return done;
-                        };
-                        done.push((index, decode(overlay)));
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
-        for handle in handles {
-            let done = handle
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
-            for (index, result) in done {
-                results[index] = Some(result);
-            }
-        }
-    });
-    results
-        .into_iter()
-        .map(|result| result.expect("every queued overlay is decoded"))
-        .collect()
 }
 
 fn overlay_kind_name(kind: OverlayKind) -> &'static str {

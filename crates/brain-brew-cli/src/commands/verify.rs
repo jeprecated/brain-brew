@@ -10,7 +10,8 @@ use brain_brew_formats::{
     crowdanki, manifest, media_map, note_type_map, source_includes, strict_yaml,
 };
 
-use crate::args::parse_verify_args;
+use crate::args::{VerifyArgs, parse_verify_args};
+use crate::concurrency::map_in_order;
 use crate::help;
 use crate::io::{
     SourceContext, include_roots_from_manifest, manifest_root, read_manifest,
@@ -54,8 +55,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             .keys()
             .cloned()
             .collect::<Vec<_>>()
-    } else if let Some(target) = verify_args.target {
-        vec![target]
+    } else if let Some(target) = &verify_args.target {
+        vec![target.clone()]
     } else {
         return Err(help::usage_error(
             "verify",
@@ -82,65 +83,20 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         },
     )?;
     let media_roots = MediaRootSelections::parse(&registry, &verify_args.media_roots, &root)?;
+    // Targets verify independently from read-only sources, so they run
+    // concurrently; results are replayed in target order (plan, source formats,
+    // then the rest), so the first reported error and all output are unchanged.
+    let verified = map_in_order(&target_names, |target| {
+        verify_target(&registry, &verify_args, &media_roots, target)
+    });
     let mut warnings = Vec::new();
     let mut media_targets = Vec::new();
-    for target in &target_names {
-        let target_reference = if verify_args.all_targets {
-            registry
-                .root()
-                .identity
-                .as_ref()
-                .map(|identity| format!("{}:{target}", identity.id))
-                .unwrap_or_else(|| target.clone())
-        } else {
-            target.clone()
-        };
-        let plan = registry.plan(&target_reference)?;
-        verify_plan_source_formats(&plan, &mut verified_formats)?;
-        let policy = verify_args.translation_coverage.unwrap_or_else(|| {
-            plan.target_manifest
-                .targets
-                .get(&plan.target)
-                .map(|target| target.translation_coverage)
-                .unwrap_or_default()
-        });
-        verify_translation_coverage_policy(&plan, policy, &mut warnings)?;
-        let deck = plan.compose().map_err(|report| {
-            output::compose_error(
-                "verify",
-                serde_json::json!({"target": target, "manifest": verify_args.manifest_path}),
-                &report,
-            )
-        })?;
-        deck.validate().map_err(|report| {
-            output::validation_error(
-                "verify",
-                serde_json::json!({"target": target, "manifest": verify_args.manifest_path}),
-                &report,
-            )
-        })?;
-        let result = verify_owned_media(&plan, &deck, &media_roots, verify_args.media_mode, false)?;
-        warnings.extend(
-            result
-                .warnings
-                .into_iter()
-                .map(|warning| format!("target {target}: {warning}")),
-        );
-        media_targets.push(serde_json::json!({
-            "target": target,
-            "declarations": deck.media.len(),
-            "mode": verify_args.media_mode.name(),
-            "release_ready": verify_args.media_mode.release_ready(deck.media.len()),
-        }));
-        if !verify_args.skip_content_validation {
-            verify_deck_content(target, &deck)?;
-        }
-        verify_configured_exports(
-            &plan.target_manifest_root,
-            &plan.target_manifest,
-            &plan.target,
-            &deck,
-        )?;
+    for verified in verified {
+        let planned = verified?;
+        verify_source_formats(&planned.format_checks, &mut verified_formats)?;
+        let outcome = planned.outcome?;
+        warnings.extend(outcome.warnings);
+        media_targets.push(outcome.media_target);
     }
 
     let release_ready = media_targets
@@ -185,6 +141,100 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+/// Warnings and media summary for one verified target.
+struct TargetOutcome {
+    warnings: Vec<String>,
+    media_target: serde_json::Value,
+}
+
+/// A planned target: the format checks its sources need, which the caller
+/// runs in target order, and the outcome of verifying everything else.
+struct PlannedTarget {
+    format_checks: Vec<(FormatCheck, PathBuf)>,
+    outcome: Result<TargetOutcome, String>,
+}
+
+/// Plan one target, then verify everything except source formats.
+fn verify_target(
+    registry: &ManifestRegistry,
+    verify_args: &VerifyArgs,
+    media_roots: &MediaRootSelections,
+    target: &String,
+) -> Result<PlannedTarget, String> {
+    let target_reference = if verify_args.all_targets {
+        registry
+            .root()
+            .identity
+            .as_ref()
+            .map(|identity| format!("{}:{target}", identity.id))
+            .unwrap_or_else(|| target.clone())
+    } else {
+        target.clone()
+    };
+    let plan = registry.plan(&target_reference)?;
+    Ok(PlannedTarget {
+        format_checks: plan_format_checks(&plan),
+        outcome: verify_planned_target(&plan, verify_args, media_roots, target),
+    })
+}
+
+fn verify_planned_target(
+    plan: &TargetPlan,
+    verify_args: &VerifyArgs,
+    media_roots: &MediaRootSelections,
+    target: &String,
+) -> Result<TargetOutcome, String> {
+    let mut warnings = Vec::new();
+    let policy = verify_args.translation_coverage.unwrap_or_else(|| {
+        plan.target_manifest
+            .targets
+            .get(&plan.target)
+            .map(|target| target.translation_coverage)
+            .unwrap_or_default()
+    });
+    verify_translation_coverage_policy(plan, policy, &mut warnings)?;
+    let deck = plan.compose().map_err(|report| {
+        output::compose_error(
+            "verify",
+            serde_json::json!({"target": target, "manifest": verify_args.manifest_path}),
+            &report,
+        )
+    })?;
+    deck.validate().map_err(|report| {
+        output::validation_error(
+            "verify",
+            serde_json::json!({"target": target, "manifest": verify_args.manifest_path}),
+            &report,
+        )
+    })?;
+    let result = verify_owned_media(plan, &deck, media_roots, verify_args.media_mode, false)?;
+    warnings.extend(
+        result
+            .warnings
+            .into_iter()
+            .map(|warning| format!("target {target}: {warning}")),
+    );
+    let media_target = serde_json::json!({
+        "target": target,
+        "declarations": deck.media.len(),
+        "mode": verify_args.media_mode.name(),
+        "release_ready": verify_args.media_mode.release_ready(deck.media.len()),
+    });
+    if !verify_args.skip_content_validation {
+        verify_deck_content(target, &deck)?;
+    }
+    verify_configured_exports(
+        &plan.target_manifest_root,
+        &plan.target_manifest,
+        &plan.target,
+        &deck,
+    )?;
+    Ok(TargetOutcome {
+        warnings,
+        media_target,
+    })
 }
 
 fn verify_included_media_map_format(
@@ -240,16 +290,9 @@ enum FormatCheck {
     NoteTypes,
 }
 
-/// Check the canonical format of every source a target plan reads.
-///
-/// Targets share most of their sources and a file's format does not change
-/// during one run, so `verified` records each (check, file) pair already
-/// proven canonical and later targets skip it.
-fn verify_plan_source_formats(
-    plan: &TargetPlan,
-    verified: &mut BTreeSet<(FormatCheck, PathBuf)>,
-) -> Result<(), String> {
-    let base = std::iter::once((FormatCheck::CanonicalDeck, &plan.base_source.path));
+/// The canonical-format checks for every source a target plan reads.
+fn plan_format_checks(plan: &TargetPlan) -> Vec<(FormatCheck, PathBuf)> {
+    let base = std::iter::once((FormatCheck::CanonicalDeck, plan.base_source.path.clone()));
     let sources = plan.sources().filter_map(|source| {
         let check = match &source.kind {
             PlanSourceKind::Overlay { .. } => FormatCheck::Overlay,
@@ -261,11 +304,20 @@ fn verify_plan_source_formats(
             | PlanSourceKind::CsvDescriptor
             | PlanSourceKind::CsvTable { .. } => return None,
         };
-        Some((check, &source.path))
+        Some((check, source.path.clone()))
     });
-    for (check, path) in base.chain(sources) {
-        if verified.insert((check, path.clone())) {
-            verify_source_format(check, path)?;
+    base.chain(sources).collect()
+}
+
+/// Run format checks in order, skipping (check, file) pairs already proven
+/// canonical: targets share most sources and files cannot change mid-run.
+fn verify_source_formats(
+    checks: &[(FormatCheck, PathBuf)],
+    verified: &mut BTreeSet<(FormatCheck, PathBuf)>,
+) -> Result<(), String> {
+    for (check, path) in checks {
+        if verified.insert((*check, path.clone())) {
+            verify_source_format(*check, path)?;
         }
     }
     Ok(())
