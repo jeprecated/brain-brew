@@ -61,6 +61,10 @@ pub fn write_multiline_or_scalar(out: &mut String, indent: &str, key: &str, valu
 }
 
 fn can_emit_plain_scalar(value: &str) -> bool {
+    has_plain_scalar_shape(value) && parses_as_same_string(value)
+}
+
+fn has_plain_scalar_shape(value: &str) -> bool {
     !value.is_empty()
         && !value.starts_with([
             ' ', '-', '?', ':', '@', '`', '&', '*', '!', '|', '>', '#', '{', '[', ',', '\t',
@@ -68,7 +72,6 @@ fn can_emit_plain_scalar(value: &str) -> bool {
         && !value.ends_with([' ', '\t', ':'])
         && !contains_colon_mapping_indicator(value)
         && value.chars().all(is_allowed_plain_char)
-        && parses_as_same_string(value)
 }
 
 fn is_allowed_plain_char(ch: char) -> bool {
@@ -83,6 +86,21 @@ fn contains_colon_mapping_indicator(value: &str) -> bool {
 }
 
 fn parses_as_same_string(value: &str) -> bool {
+    !may_resolve_to_non_string(value) || probe_parses_as_same_string(value)
+}
+
+/// serde_yaml resolves an untagged plain scalar to a non-string only when it is
+/// a null or boolean keyword or starts like a number. Any other plain-shaped
+/// value reads back as itself, so only these candidates need the parser probe.
+fn may_resolve_to_non_string(value: &str) -> bool {
+    value.starts_with(|ch: char| ch.is_ascii_digit() || matches!(ch, '.' | '+' | '-'))
+        || matches!(
+            value,
+            "~" | "null" | "Null" | "NULL" | "true" | "True" | "TRUE" | "false" | "False" | "FALSE"
+        )
+}
+
+fn probe_parses_as_same_string(value: &str) -> bool {
     let input = format!("value: {value}\n");
     let Ok(serde_yaml::Value::Mapping(mapping)) = serde_yaml::from_str::<serde_yaml::Value>(&input)
     else {
@@ -165,4 +183,59 @@ fn block_content_lines(value: &str) -> Vec<&str> {
         lines.pop();
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every plain-shaped value the probe would accept without help must be one
+    /// the keyword/number screen lets through unprobed, and vice versa.
+    #[test]
+    fn unprobed_plain_scalars_always_read_back_as_the_same_string() {
+        let alphabet = [
+            'a', 'n', 'e', 'x', 'Z', '0', '7', '.', ' ', ',', '_', '-', '/', ':',
+        ];
+        let mut corpus = vec![String::new()];
+        let mut frontier = vec![String::new()];
+        for _ in 0..4 {
+            frontier = frontier
+                .iter()
+                .flat_map(|prefix| alphabet.iter().map(move |ch| format!("{prefix}{ch}")))
+                .collect();
+            corpus.extend(frontier.iter().cloned());
+        }
+        corpus.extend(
+            [
+                "null", "Null", "NULL", "true", "True", "TRUE", "false", "False", "FALSE", "yes",
+                "no", "on", "off", "inf", "Infinity", "nan", "NaN", "e5", "x1", "y", "n",
+                "infinity", "nul", "truex", "Ture", "ok/0x1F", "a.inf",
+            ]
+            .map(str::to_owned),
+        );
+        let mut unprobed = 0;
+        for value in corpus.iter().filter(|value| has_plain_scalar_shape(value)) {
+            if !may_resolve_to_non_string(value) {
+                unprobed += 1;
+                assert!(
+                    probe_parses_as_same_string(value),
+                    "{value:?} skipped the probe but does not read back as itself"
+                );
+            }
+        }
+        assert!(
+            unprobed > 1_000,
+            "corpus exercised only {unprobed} unprobed values"
+        );
+    }
+
+    #[test]
+    fn ambiguous_plain_scalars_are_still_quoted() {
+        for value in ["1", "0x1F", ".5", ".inf", "+1", "1e5", "null", "True", "~"] {
+            assert_ne!(scalar(value), value, "{value:?} must not be emitted plain");
+        }
+        for value in ["Infinity", "nan", "yes", "plain text", "http://x"] {
+            assert_eq!(scalar(value), value, "{value:?} should stay plain");
+        }
+    }
 }
