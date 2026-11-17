@@ -1,5 +1,6 @@
+use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use brain_brew_core::{
     CanonicalDeck, Overlay, TranslationCoverageCategory, TranslationStackCoverageStatus,
@@ -67,6 +68,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         .map_err(|error| error.to_string())?
         .into_path_buf();
     verify_canonical_deck_format(&base_deck_path)?;
+    let mut verified_formats =
+        BTreeSet::from([(FormatCheck::CanonicalDeck, base_deck_path.clone())]);
     verify_included_media_map_format(
         &base_deck_path,
         &SourceContext {
@@ -93,7 +96,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             target.clone()
         };
         let plan = registry.plan(&target_reference)?;
-        verify_plan_source_formats(&plan)?;
+        verify_plan_source_formats(&plan, &mut verified_formats)?;
         let policy = verify_args.translation_coverage.unwrap_or_else(|| {
             plan.target_manifest
                 .targets
@@ -228,46 +231,72 @@ fn verify_deck_content(target: &str, deck: &CanonicalDeck) -> Result<(), String>
     }
 }
 
-fn verify_plan_source_formats(plan: &TargetPlan) -> Result<(), String> {
-    verify_canonical_deck_format(&plan.base_source.path)?;
-    for source in plan.sources() {
-        match &source.kind {
-            PlanSourceKind::Overlay { .. } => verify_overlay_format(&source.path)?,
-            PlanSourceKind::MediaInclude => {
-                let input = fs::read_to_string(&source.path)
-                    .map_err(|error| format!("{}: {error}", source.path.display()))?;
-                let formatted = media_map::format_str(&input)
-                    .map_err(|error| format!("{}: {error}", source.path.display()))?;
-                if formatted != input {
-                    return Err(format!(
-                        "{} is not in canonical format",
-                        source.path.display()
-                    ));
-                }
-            }
-            PlanSourceKind::NoteTypesInclude => {
-                let input = fs::read_to_string(&source.path)
-                    .map_err(|error| format!("{}: {error}", source.path.display()))?;
-                let formatted = source_includes::format_preserving_file_includes(
-                    &input,
-                    note_type_map::format_str,
-                )
-                .map_err(|error| format!("{}: {error}", source.path.display()))?;
-                if formatted != input {
-                    return Err(format!(
-                        "{} is not in canonical format",
-                        source.path.display()
-                    ));
-                }
-            }
+/// Canonical-format check applied to one source file.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum FormatCheck {
+    CanonicalDeck,
+    Overlay,
+    MediaMap,
+    NoteTypes,
+}
+
+/// Check the canonical format of every source a target plan reads.
+///
+/// Targets share most of their sources and a file's format does not change
+/// during one run, so `verified` records each (check, file) pair already
+/// proven canonical and later targets skip it.
+fn verify_plan_source_formats(
+    plan: &TargetPlan,
+    verified: &mut BTreeSet<(FormatCheck, PathBuf)>,
+) -> Result<(), String> {
+    let base = std::iter::once((FormatCheck::CanonicalDeck, &plan.base_source.path));
+    let sources = plan.sources().filter_map(|source| {
+        let check = match &source.kind {
+            PlanSourceKind::Overlay { .. } => FormatCheck::Overlay,
+            PlanSourceKind::MediaInclude => FormatCheck::MediaMap,
+            PlanSourceKind::NoteTypesInclude => FormatCheck::NoteTypes,
             PlanSourceKind::Base
             | PlanSourceKind::ScalarInclude { .. }
             | PlanSourceKind::MediaAsset { .. }
             | PlanSourceKind::CsvDescriptor
-            | PlanSourceKind::CsvTable { .. } => {}
+            | PlanSourceKind::CsvTable { .. } => return None,
+        };
+        Some((check, &source.path))
+    });
+    for (check, path) in base.chain(sources) {
+        if verified.insert((check, path.clone())) {
+            verify_source_format(check, path)?;
         }
     }
     Ok(())
+}
+
+fn verify_source_format(check: FormatCheck, path: &Path) -> Result<(), String> {
+    match check {
+        FormatCheck::CanonicalDeck => verify_canonical_deck_format(path),
+        FormatCheck::Overlay => verify_overlay_format(path),
+        FormatCheck::MediaMap => {
+            let input =
+                fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+            let formatted = media_map::format_str(&input)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            if formatted != input {
+                return Err(format!("{} is not in canonical format", path.display()));
+            }
+            Ok(())
+        }
+        FormatCheck::NoteTypes => {
+            let input =
+                fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+            let formatted =
+                source_includes::format_preserving_file_includes(&input, note_type_map::format_str)
+                    .map_err(|error| format!("{}: {error}", path.display()))?;
+            if formatted != input {
+                return Err(format!("{} is not in canonical format", path.display()));
+            }
+            Ok(())
+        }
+    }
 }
 
 fn verify_translation_coverage_policy(
