@@ -286,13 +286,15 @@ pub struct ExpandedOverlay {
 
 /// Parse a Federated Deck manifest from strict YAML.
 pub fn from_str(input: &str) -> Result<FederatedDeckManifest, ManifestError> {
-    crate::strict_yaml::reject_duplicate_keys(input).map_err(ManifestError::Parse)?;
+    let strict =
+        crate::strict_yaml::strict_checks(input, crate::strict_yaml::ScalarPolicy::Manifest);
+    strict
+        .reject_duplicate_keys(input)
+        .map_err(ManifestError::Parse)?;
     let yaml: ManifestYaml = serde_yaml::from_str(input).map_err(ManifestError::Parse)?;
-    crate::strict_yaml::reject_unintended_scalars(
-        input,
-        crate::strict_yaml::ScalarPolicy::Manifest,
-    )
-    .map_err(ManifestError::Parse)?;
+    strict
+        .reject_unintended_scalars()
+        .map_err(ManifestError::Parse)?;
     yaml.into_manifest()
 }
 

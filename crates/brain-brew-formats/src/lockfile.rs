@@ -98,7 +98,11 @@ impl LockedSource {
 
 /// Parse a federation lock file from strict YAML.
 pub fn from_str(input: &str) -> Result<FederationLock, LockfileError> {
-    crate::strict_yaml::reject_duplicate_keys(input).map_err(LockfileError::Parse)?;
+    let strict =
+        crate::strict_yaml::strict_checks(input, crate::strict_yaml::ScalarPolicy::Lockfile);
+    strict
+        .reject_duplicate_keys(input)
+        .map_err(LockfileError::Parse)?;
 
     // Check the version before interpreting source fields. In particular, never
     // reinterpret the optional-field v1 schema as a weaker v2 entry.
@@ -106,11 +110,9 @@ pub fn from_str(input: &str) -> Result<FederationLock, LockfileError> {
     validate_version(header.version)?;
 
     let yaml: FederationLockYaml = serde_yaml::from_str(input).map_err(LockfileError::Parse)?;
-    crate::strict_yaml::reject_unintended_scalars(
-        input,
-        crate::strict_yaml::ScalarPolicy::Lockfile,
-    )
-    .map_err(LockfileError::Parse)?;
+    strict
+        .reject_unintended_scalars()
+        .map_err(LockfileError::Parse)?;
     yaml.into_lock()
 }
 

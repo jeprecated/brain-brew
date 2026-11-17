@@ -62,6 +62,34 @@ pub fn reject_unintended_scalars(
     .deserialize(serde_yaml::Deserializer::from_str(input))
 }
 
+/// Both strict checks for one document, from a single policy pass.
+///
+/// The scalar-policy pass also rejects duplicate keys, so when it succeeds the
+/// separate duplicate-key pass cannot fail and is skipped. Decoders still
+/// report a duplicate key before schema errors and scalar errors after typed
+/// decoding, exactly as when running the two checks separately.
+pub struct StrictChecks(Result<(), serde_yaml::Error>);
+
+/// Run the scalar-policy pass for `input` once, ahead of typed decoding.
+pub fn strict_checks(input: &str, policy: ScalarPolicy) -> StrictChecks {
+    StrictChecks(reject_unintended_scalars(input, policy))
+}
+
+impl StrictChecks {
+    /// Equivalent to [`reject_duplicate_keys`] for the checked input.
+    pub fn reject_duplicate_keys(&self, input: &str) -> Result<(), serde_yaml::Error> {
+        match &self.0 {
+            Ok(()) => Ok(()),
+            Err(_) => reject_duplicate_keys(input),
+        }
+    }
+
+    /// Equivalent to [`reject_unintended_scalars`] for the checked input and policy.
+    pub fn reject_unintended_scalars(self) -> Result<(), serde_yaml::Error> {
+        self.0
+    }
+}
+
 struct StrictYamlSeed {
     path: String,
     scalar_policy: Option<ScalarPolicy>,
@@ -330,5 +358,42 @@ fn display_key(key: &Value) -> String {
             .unwrap_or_else(|_| format!("{key:?}"))
             .trim()
             .to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outcome(result: Result<(), serde_yaml::Error>) -> Result<(), String> {
+        result.map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn strict_checks_match_the_separate_duplicate_and_scalar_checks() {
+        let inputs = [
+            "id: a\nkind: translation\n",
+            "id: a\nid: b\n",
+            "id: 1\n",
+            "notes:\n  a: true\n  a: x\n",
+            "rtl: 1\nid: a\nid: a\n",
+            "1: a\n",
+            "id: [\n",
+            "translations:\n  require_complete: true\n",
+            "notes: ~\n",
+        ];
+        for input in inputs {
+            let checks = strict_checks(input, ScalarPolicy::Overlay);
+            assert_eq!(
+                outcome(checks.reject_duplicate_keys(input)),
+                outcome(reject_duplicate_keys(input)),
+                "duplicate-key verdict for {input:?}"
+            );
+            assert_eq!(
+                outcome(checks.reject_unintended_scalars()),
+                outcome(reject_unintended_scalars(input, ScalarPolicy::Overlay)),
+                "scalar verdict for {input:?}"
+            );
+        }
     }
 }

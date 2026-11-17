@@ -95,14 +95,16 @@ fn collect_legacy_target_adaptation_diagnostics(
 
 /// Parse a CanonicalDeck from strict canonical YAML.
 pub fn from_str(input: &str) -> Result<CanonicalDeck, CanonicalYamlError> {
-    crate::strict_yaml::reject_duplicate_keys(input).map_err(CanonicalYamlError::Parse)?;
+    let strict =
+        crate::strict_yaml::strict_checks(input, crate::strict_yaml::ScalarPolicy::CanonicalDeck);
+    strict
+        .reject_duplicate_keys(input)
+        .map_err(CanonicalYamlError::Parse)?;
     validate_canonical_field_value_unions(input)?;
     let file: CanonicalDeckYaml = serde_yaml::from_str(input).map_err(CanonicalYamlError::Parse)?;
-    crate::strict_yaml::reject_unintended_scalars(
-        input,
-        crate::strict_yaml::ScalarPolicy::CanonicalDeck,
-    )
-    .map_err(CanonicalYamlError::Parse)?;
+    strict
+        .reject_unintended_scalars()
+        .map_err(CanonicalYamlError::Parse)?;
     let deck = file.into_deck()?;
     deck.validate().map_err(CanonicalYamlError::Validation)?;
     validate_deck_yaml_keys(&deck)?;
@@ -111,10 +113,15 @@ pub fn from_str(input: &str) -> Result<CanonicalDeck, CanonicalYamlError> {
 
 /// Parse a sparse overlay YAML file.
 pub fn overlay_from_str(input: &str) -> Result<Overlay, CanonicalYamlError> {
-    crate::strict_yaml::reject_duplicate_keys(input).map_err(CanonicalYamlError::Parse)?;
+    let strict =
+        crate::strict_yaml::strict_checks(input, crate::strict_yaml::ScalarPolicy::Overlay);
+    strict
+        .reject_duplicate_keys(input)
+        .map_err(CanonicalYamlError::Parse)?;
     validate_overlay_unions(input)?;
     let file: OverlayYaml = serde_yaml::from_str(input).map_err(CanonicalYamlError::Parse)?;
-    crate::strict_yaml::reject_unintended_scalars(input, crate::strict_yaml::ScalarPolicy::Overlay)
+    strict
+        .reject_unintended_scalars()
         .map_err(CanonicalYamlError::Parse)?;
     let overlay = file.into_overlay()?;
     validate_overlay_yaml_keys(&overlay)?;
@@ -160,14 +167,16 @@ fn ordered_note_fields<'a>(
 pub(crate) fn note_type_map_from_str(
     input: &str,
 ) -> Result<BTreeMap<StableId, NoteType>, CanonicalYamlError> {
-    crate::strict_yaml::reject_duplicate_keys(input).map_err(CanonicalYamlError::Parse)?;
+    let strict =
+        crate::strict_yaml::strict_checks(input, crate::strict_yaml::ScalarPolicy::CanonicalDeck);
+    strict
+        .reject_duplicate_keys(input)
+        .map_err(CanonicalYamlError::Parse)?;
     let file: BTreeMap<String, NoteTypeYaml> =
         serde_yaml::from_str(input).map_err(CanonicalYamlError::Parse)?;
-    crate::strict_yaml::reject_unintended_scalars(
-        input,
-        crate::strict_yaml::ScalarPolicy::CanonicalDeck,
-    )
-    .map_err(CanonicalYamlError::Parse)?;
+    strict
+        .reject_unintended_scalars()
+        .map_err(CanonicalYamlError::Parse)?;
     let note_types = file
         .into_iter()
         .map(|(id, note_type)| {
