@@ -738,6 +738,12 @@ fn strip_csv_sparse_field_declarations(
     ),
     SourceDocumentError,
 > {
+    // `yaml` is serde_yaml's own emission of the prepared source, so it parses
+    // and spells keys literally: without the text there is no root
+    // `field_additions` mapping, and the document is returned unchanged.
+    if !yaml.contains("field_additions") {
+        return Ok((yaml.to_owned(), BTreeMap::new()));
+    }
     let mut root = serde_yaml::from_str::<Value>(yaml)
         .map_err(|error| SourceDocumentError::source(provenance, error.to_string()))?;
     let Some(root_mapping) = root.as_mapping_mut() else {
@@ -1128,6 +1134,12 @@ fn strip_csv_translation_declarations(
     yaml: &str,
     provenance: &SourceProvenance,
 ) -> Result<(String, Vec<CsvTranslationSourceDeclaration>), SourceDocumentError> {
+    // `yaml` is serde_yaml's own emission of the prepared source, so it parses
+    // and spells keys literally: without the text there is no
+    // `translations.from_csv` key, and the document is returned unchanged.
+    if !yaml.contains("from_csv") {
+        return Ok((yaml.to_owned(), Vec::new()));
+    }
     let mut root = serde_yaml::from_str::<Value>(yaml)
         .map_err(|error| SourceDocumentError::source(provenance, error.to_string()))?;
     let Some(root_mapping) = root.as_mapping_mut() else {
