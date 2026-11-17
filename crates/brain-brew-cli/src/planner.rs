@@ -13,6 +13,7 @@ use brain_brew_formats::canonical_source_document::NoteAuthoringProvenance;
 use brain_brew_formats::csv_note_source::CsvTranslationAuthoringProvenance;
 use brain_brew_formats::manifest::{self, FederatedDeckManifest};
 use brain_brew_formats::media;
+use brain_brew_formats::overlay_source_document::OverlaySourceDocument;
 use brain_brew_formats::source_document::{
     IncludedSourceKind, SourceProvenance as DocumentProvenance,
 };
@@ -984,64 +985,129 @@ fn source_precedence(kind: RegistrySourceKind) -> u8 {
 }
 
 fn validate_overlay_catalogs(manifests: &[RegistryManifest]) -> Result<(), String> {
+    let entries = manifests
+        .iter()
+        .flat_map(|loaded| {
+            loaded
+                .manifest
+                .overlays
+                .iter()
+                .map(move |(catalog_id, entry)| {
+                    let field = format!("overlays.{catalog_id}.file");
+                    let file = authorize_manifest_path(loaded, &field, &entry.file);
+                    (loaded, catalog_id, entry, file)
+                })
+        })
+        .collect::<Vec<_>>();
+    let mut decoded = decode_catalog_overlays(
+        &entries
+            .iter()
+            .filter_map(|(loaded, _, _, file)| Some((*loaded, file.as_ref().ok()?.as_path())))
+            .collect::<Vec<_>>(),
+    )
+    .into_iter();
     let mut source_identities = BTreeMap::<PathBuf, String>::new();
-    for loaded in manifests {
-        for (catalog_id, entry) in &loaded.manifest.overlays {
-            let field = format!("overlays.{catalog_id}.file");
-            let file = authorize_manifest_path(loaded, &field, &entry.file)?;
-            let qualified = loaded
-                .identity
-                .as_ref()
-                .map(|package| format!("{}:{catalog_id}", package.id))
-                .unwrap_or_else(|| catalog_id.clone());
-            let declared_identity = format!(
-                "{qualified} ({}) declared by {}",
-                entry.kind.as_deref().unwrap_or("unspecified kind"),
-                loaded.path.display()
-            );
-            if let Some(previous) =
-                source_identities.insert(file.clone(), declared_identity.clone())
-                && previous != declared_identity
-            {
-                return Err(format!(
-                    "overlay source {} is cataloged under conflicting identities: {previous}; {declared_identity}",
-                    file.display()
-                ));
-            }
-            let document = overlay_document_from_package(
-                &file,
-                &loaded.root,
-                &loaded.include_roots,
+    for (loaded, catalog_id, entry, file) in entries {
+        let file = file?;
+        let decoded = decoded
+            .next()
+            .expect("every authorized catalog overlay is decoded");
+        let qualified = loaded
+            .identity
+            .as_ref()
+            .map(|package| format!("{}:{catalog_id}", package.id))
+            .unwrap_or_else(|| catalog_id.clone());
+        let declared_identity = format!(
+            "{qualified} ({}) declared by {}",
+            entry.kind.as_deref().unwrap_or("unspecified kind"),
+            loaded.path.display()
+        );
+        if let Some(previous) = source_identities.insert(file.clone(), declared_identity.clone())
+            && previous != declared_identity
+        {
+            return Err(format!(
+                "overlay source {} is cataloged under conflicting identities: {previous}; {declared_identity}",
+                file.display()
+            ));
+        }
+        let document = decoded.map_err(|error| {
+            format!(
+                "overlay catalog {catalog_id:?} declared in {} could not decode {}: {error}",
+                loaded.path.display(),
+                file.display()
             )
-            .map_err(|error| {
-                format!(
-                    "overlay catalog {catalog_id:?} declared in {} could not decode {}: {error}",
+        })?;
+        let overlay = document.resolved_overlay();
+        if overlay.id.as_str() != catalog_id {
+            return Err(format!(
+                "overlay catalog identity mismatch in {} at overlays.{catalog_id}: catalog ID {catalog_id:?} points to {} whose overlay.id is {:?}",
+                loaded.path.display(),
+                file.display(),
+                overlay.id.as_str()
+            ));
+        }
+        if let Some(declared_kind) = &entry.kind {
+            let actual_kind = overlay_kind_name(overlay.kind);
+            if declared_kind != actual_kind {
+                return Err(format!(
+                    "overlay catalog kind mismatch in {} at overlays.{catalog_id}.kind: declared {declared_kind:?}, but {} has overlay.kind {actual_kind:?}",
                     loaded.path.display(),
                     file.display()
-                )
-            })?;
-            let overlay = document.resolved_overlay();
-            if overlay.id.as_str() != catalog_id {
-                return Err(format!(
-                    "overlay catalog identity mismatch in {} at overlays.{catalog_id}: catalog ID {catalog_id:?} points to {} whose overlay.id is {:?}",
-                    loaded.path.display(),
-                    file.display(),
-                    overlay.id.as_str()
                 ));
-            }
-            if let Some(declared_kind) = &entry.kind {
-                let actual_kind = overlay_kind_name(overlay.kind);
-                if declared_kind != actual_kind {
-                    return Err(format!(
-                        "overlay catalog kind mismatch in {} at overlays.{catalog_id}.kind: declared {declared_kind:?}, but {} has overlay.kind {actual_kind:?}",
-                        loaded.path.display(),
-                        file.display()
-                    ));
-                }
             }
         }
     }
     Ok(())
+}
+
+/// Decode catalog overlays concurrently, returning results in input order.
+///
+/// Decoding dominates registry loading and each overlay decodes independently
+/// from read-only files, so workers share the queue. Callers check results in
+/// catalog order, so the first reported error is the one a sequential walk
+/// would reach.
+fn decode_catalog_overlays(
+    overlays: &[(&RegistryManifest, &Path)],
+) -> Vec<Result<OverlaySourceDocument, String>> {
+    let decode = |(loaded, file): &(&RegistryManifest, &Path)| {
+        overlay_document_from_package(file, &loaded.root, &loaded.include_roots)
+    };
+    let workers = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(overlays.len());
+    if workers <= 1 {
+        return overlays.iter().map(decode).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut results = (0..overlays.len()).map(|_| None).collect::<Vec<_>>();
+    std::thread::scope(|scope| {
+        let handles = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(overlay) = overlays.get(index) else {
+                            return done;
+                        };
+                        done.push((index, decode(overlay)));
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            let done = handle
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+            for (index, result) in done {
+                results[index] = Some(result);
+            }
+        }
+    });
+    results
+        .into_iter()
+        .map(|result| result.expect("every queued overlay is decoded"))
+        .collect()
 }
 
 fn overlay_kind_name(kind: OverlayKind) -> &'static str {
