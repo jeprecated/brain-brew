@@ -252,7 +252,7 @@ impl OverlaySourceDocument {
             csv_loader,
         )?;
         csv_sources.extend(translation_sources);
-        canonical_yaml::overlay_to_string(&overlay).map_err(|error| {
+        canonical_yaml::validate_overlay_emittable(&overlay).map_err(|error| {
             SourceDocumentError::source(prepared.root.provenance(), error.to_string())
         })?;
         let original_sources = prepared.original_sources()?;
@@ -274,7 +274,7 @@ impl OverlaySourceDocument {
         provenance: SourceProvenance,
         overlay: Overlay,
     ) -> Result<Self, SourceDocumentError> {
-        canonical_yaml::overlay_to_string(&overlay)
+        canonical_yaml::validate_overlay_emittable(&overlay)
             .map_err(|error| SourceDocumentError::source(&provenance, error.to_string()))?;
         Ok(Self {
             provenance,
@@ -722,8 +722,7 @@ impl OverlaySourceDocument {
     }
 
     fn validate(&self) -> Result<(), SourceDocumentError> {
-        canonical_yaml::overlay_to_string(&self.overlay)
-            .map(|_| ())
+        canonical_yaml::validate_overlay_emittable(&self.overlay)
             .map_err(|error| SourceDocumentError::source(&self.provenance, error.to_string()))
     }
 }

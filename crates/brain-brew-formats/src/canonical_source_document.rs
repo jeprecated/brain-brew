@@ -331,10 +331,10 @@ impl CanonicalSourceDocument {
             prepared.root.provenance(),
             csv_loader,
         )?;
-        canonical_yaml::to_string(&resolved_deck).map_err(|error| {
+        canonical_yaml::validate_emittable(&resolved_deck).map_err(|error| {
             SourceDocumentError::source(prepared.root.provenance(), error.to_string())
         })?;
-        canonical_yaml::to_string(&deck).map_err(|error| {
+        canonical_yaml::validate_emittable(&deck).map_err(|error| {
             SourceDocumentError::source(prepared.root.provenance(), error.to_string())
         })?;
         let original_sources = prepared.original_sources()?;
@@ -355,7 +355,7 @@ impl CanonicalSourceDocument {
         provenance: SourceProvenance,
         deck: CanonicalDeck,
     ) -> Result<Self, SourceDocumentError> {
-        canonical_yaml::to_string(&deck)
+        canonical_yaml::validate_emittable(&deck)
             .map_err(|error| SourceDocumentError::source(&provenance, error.to_string()))?;
         let authoring_provenance = inline_provenance(&deck, &provenance, "notes");
         Ok(Self {
@@ -586,9 +586,8 @@ impl CanonicalSourceDocument {
     }
 
     fn validate(&self) -> Result<(), SourceDocumentError> {
-        canonical_yaml::to_string(&self.deck)
-            .and_then(|_| canonical_yaml::to_string(&self.resolved_deck))
-            .map(|_| ())
+        canonical_yaml::validate_emittable(&self.deck)
+            .and_then(|()| canonical_yaml::validate_emittable(&self.resolved_deck))
             .map_err(|error| SourceDocumentError::source(&self.provenance, error.to_string()))
     }
 }

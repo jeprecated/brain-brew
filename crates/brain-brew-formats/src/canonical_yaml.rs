@@ -239,8 +239,7 @@ fn note_type_validation_deck(note_types: BTreeMap<StableId, NoteType>) -> Canoni
 
 /// Emit a CanonicalDeck as deterministic canonical YAML.
 pub fn to_string(deck: &CanonicalDeck) -> Result<String, CanonicalYamlError> {
-    deck.validate().map_err(CanonicalYamlError::Validation)?;
-    validate_deck_yaml_keys(deck)?;
+    validate_emittable(deck)?;
 
     let mut out = String::new();
     writeln!(out, "deck:").expect("writing to a string cannot fail");
@@ -391,11 +390,22 @@ pub fn to_string(deck: &CanonicalDeck) -> Result<String, CanonicalYamlError> {
     Ok(out)
 }
 
-/// Emit a sparse overlay as deterministic YAML.
-pub fn overlay_to_string(overlay: &Overlay) -> Result<String, CanonicalYamlError> {
+/// Return the error [`to_string`] would report for `deck`, without emitting it.
+pub fn validate_emittable(deck: &CanonicalDeck) -> Result<(), CanonicalYamlError> {
+    deck.validate().map_err(CanonicalYamlError::Validation)?;
+    validate_deck_yaml_keys(deck)
+}
+
+/// Return the error [`overlay_to_string`] would report for `overlay`, without emitting it.
+pub fn validate_overlay_emittable(overlay: &Overlay) -> Result<(), CanonicalYamlError> {
     validate_translation_dictionary_invariants(overlay)?;
     validate_overlay_yaml_keys(overlay)?;
-    validate_overlay_representations(overlay)?;
+    validate_overlay_representations(overlay)
+}
+
+/// Emit a sparse overlay as deterministic YAML.
+pub fn overlay_to_string(overlay: &Overlay) -> Result<String, CanonicalYamlError> {
+    validate_overlay_emittable(overlay)?;
     let mut out = String::new();
     writeln!(out, "id: {}", overlay.id).expect("writing to a string cannot fail");
     writeln!(out, "kind: {}", overlay_kind_name(overlay.kind))
