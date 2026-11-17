@@ -162,15 +162,22 @@ impl OverlaySourceDocument {
         csv_loader: &mut impl FnMut(&CsvSourceRequest) -> Result<CsvSourceFile, String>,
     ) -> Result<Self, SourceDocumentError> {
         let prepared = prepare_source(source, false, include_loader)?;
+        // Without scalar include materialization both texts are identical, and
+        // every step below is a pure function of its text, so the resolved side
+        // reuses the source side's results instead of decoding the YAML again.
+        let materialized = prepared.materialized_yaml != prepared.yaml_without_directives;
         let (source_yaml, translation_declarations) = strip_csv_translation_declarations(
             &prepared.yaml_without_directives,
             prepared.root.provenance(),
         )?;
-        let (resolved_yaml, resolved_translation_declarations) =
+        let (resolved_yaml, resolved_translation_declarations) = if materialized {
             strip_csv_translation_declarations(
                 &prepared.materialized_yaml,
                 prepared.root.provenance(),
-            )?;
+            )?
+        } else {
+            (source_yaml.clone(), translation_declarations.clone())
+        };
         if translation_declarations != resolved_translation_declarations {
             return Err(SourceDocumentError::at(
                 prepared.root.provenance(),
@@ -180,8 +187,11 @@ impl OverlaySourceDocument {
         }
         let (source_yaml, sparse_declarations) =
             strip_csv_sparse_field_declarations(&source_yaml, prepared.root.provenance())?;
-        let (resolved_yaml, resolved_sparse_declarations) =
-            strip_csv_sparse_field_declarations(&resolved_yaml, prepared.root.provenance())?;
+        let (resolved_yaml, resolved_sparse_declarations) = if materialized {
+            strip_csv_sparse_field_declarations(&resolved_yaml, prepared.root.provenance())?
+        } else {
+            (source_yaml.clone(), sparse_declarations.clone())
+        };
         if sparse_declarations != resolved_sparse_declarations {
             return Err(SourceDocumentError::at(
                 prepared.root.provenance(),
@@ -192,10 +202,13 @@ impl OverlaySourceDocument {
         let overlay = canonical_yaml::overlay_from_str(&source_yaml).map_err(|error| {
             SourceDocumentError::source(prepared.root.provenance(), error.to_string())
         })?;
-        let mut resolved_overlay =
+        let mut resolved_overlay = if materialized {
             canonical_yaml::overlay_from_str(&resolved_yaml).map_err(|error| {
                 SourceDocumentError::source(prepared.root.provenance(), error.to_string())
-            })?;
+            })?
+        } else {
+            overlay.clone()
+        };
         for id in prepared.includes.media_asset_sources().keys() {
             if overlay
                 .media_changes
