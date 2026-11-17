@@ -18,7 +18,7 @@ use crate::csv_note_source::{
 };
 use crate::source_document::{
     EditLocation, ImageConversionReport, IncludeRequest, IncludeState, IncludedSource,
-    SourceDocumentEmission, SourceDocumentError, SourceFile, SourceProvenance,
+    PreparedSource, SourceDocumentEmission, SourceDocumentError, SourceFile, SourceProvenance,
     convert_text_to_images, prepare_source,
 };
 
@@ -300,35 +300,20 @@ impl CanonicalSourceDocument {
         csv_loader: &mut impl FnMut(&CsvSourceRequest) -> Result<CsvSourceFile, String>,
     ) -> Result<Self, SourceDocumentError> {
         let prepared = prepare_source(source, true, include_loader)?;
-        let root_yaml = yaml_with_included_structures_for_validation(
-            &prepared.yaml_without_directives,
-            prepared.includes.note_types(),
-            prepared.includes.media(),
-        )?;
-        let (root_yaml, note_sources) =
-            strip_note_source_expression(&root_yaml, prepared.root.provenance())?;
-        let mut deck = canonical_yaml::from_str(&root_yaml).map_err(|error| {
-            SourceDocumentError::source(prepared.root.provenance(), error.to_string())
-        })?;
-        if let Some(media) = prepared.includes.media() {
-            deck.media = media.clone();
-        }
-        for id in prepared.includes.media_asset_sources().keys() {
-            if !deck.media.contains_key(id) {
-                return Err(SourceDocumentError::at(
-                    prepared.root.provenance(),
-                    format!("media.{id}.source"),
-                    "media source requires a complete path and sha256 declaration",
-                ));
-            }
-        }
-        let materialized_yaml = yaml_with_included_structures_for_validation(
-            &prepared.materialized_yaml,
-            prepared.includes.resolved_note_types(),
-            prepared.includes.media(),
-        )?;
-        let (materialized_yaml, materialized_note_sources) =
-            strip_note_source_expression(&materialized_yaml, prepared.root.provenance())?;
+        // The source and materialized texts decode independently, so the
+        // materialized side decodes on a scoped thread while the source side
+        // decodes here. Results are checked afterwards in the sequential order,
+        // so the first reported error is unchanged.
+        let (source_side, materialized_side) = std::thread::scope(|scope| {
+            let materialized = scope.spawn(|| decode_materialized_side(&prepared));
+            let source = decode_source_side(&prepared);
+            let materialized = materialized
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+            (source, materialized)
+        });
+        let (deck, note_sources) = source_side?;
+        let (materialized_note_sources, resolved_deck) = materialized_side?;
         if materialized_note_sources != note_sources {
             return Err(SourceDocumentError::at(
                 prepared.root.provenance(),
@@ -336,9 +321,7 @@ impl CanonicalSourceDocument {
                 "scalar include materialization changed the notes source declarations",
             ));
         }
-        let mut resolved_deck = canonical_yaml::from_str(&materialized_yaml).map_err(|error| {
-            SourceDocumentError::source(prepared.root.provenance(), error.to_string())
-        })?;
+        let mut resolved_deck = resolved_deck?;
         if let Some(media) = prepared.includes.media() {
             resolved_deck.media = media.clone();
         }
@@ -884,6 +867,59 @@ fn csv_authoring_location(
         column: Some(cell.column),
         canonical_path,
     }
+}
+
+/// Decode the source (unmaterialized) side of a prepared Canonical Deck.
+fn decode_source_side(
+    prepared: &PreparedSource,
+) -> Result<(CanonicalDeck, Option<NoteSourceExpression>), SourceDocumentError> {
+    let root_yaml = yaml_with_included_structures_for_validation(
+        &prepared.yaml_without_directives,
+        prepared.includes.note_types(),
+        prepared.includes.media(),
+    )?;
+    let (root_yaml, note_sources) =
+        strip_note_source_expression(&root_yaml, prepared.root.provenance())?;
+    let mut deck = canonical_yaml::from_str(&root_yaml).map_err(|error| {
+        SourceDocumentError::source(prepared.root.provenance(), error.to_string())
+    })?;
+    if let Some(media) = prepared.includes.media() {
+        deck.media = media.clone();
+    }
+    for id in prepared.includes.media_asset_sources().keys() {
+        if !deck.media.contains_key(id) {
+            return Err(SourceDocumentError::at(
+                prepared.root.provenance(),
+                format!("media.{id}.source"),
+                "media source requires a complete path and sha256 declaration",
+            ));
+        }
+    }
+    Ok((deck, note_sources))
+}
+
+/// Materialized note sources, and the materialized deck's decoding, which
+/// callers check only after comparing note sources.
+type MaterializedSide = (
+    Option<NoteSourceExpression>,
+    Result<CanonicalDeck, SourceDocumentError>,
+);
+
+/// Decode the scalar-include-materialized side of a prepared Canonical Deck.
+fn decode_materialized_side(
+    prepared: &PreparedSource,
+) -> Result<MaterializedSide, SourceDocumentError> {
+    let materialized_yaml = yaml_with_included_structures_for_validation(
+        &prepared.materialized_yaml,
+        prepared.includes.resolved_note_types(),
+        prepared.includes.media(),
+    )?;
+    let (materialized_yaml, materialized_note_sources) =
+        strip_note_source_expression(&materialized_yaml, prepared.root.provenance())?;
+    let resolved_deck = canonical_yaml::from_str(&materialized_yaml).map_err(|error| {
+        SourceDocumentError::source(prepared.root.provenance(), error.to_string())
+    });
+    Ok((materialized_note_sources, resolved_deck))
 }
 
 fn strip_note_source_expression(
