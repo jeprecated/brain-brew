@@ -658,10 +658,21 @@ pub(crate) fn prepare_source(
     allow_media_include: bool,
     loader: &mut impl FnMut(&IncludeRequest) -> Result<SourceFile, String>,
 ) -> Result<PreparedSource, SourceDocumentError> {
-    strict_yaml::reject_duplicate_keys(&root.text)
-        .map_err(|error| SourceDocumentError::source(&root.provenance, error.to_string()))?;
-    let mut value = serde_yaml::from_str::<Value>(&root.text)
-        .map_err(|error| SourceDocumentError::source(&root.provenance, error.to_string()))?;
+    // serde_yaml's Value decoding rejects duplicate keys with the same key
+    // equality as the strict duplicate-key pass, so that pass only needs to
+    // run, first, when decoding fails.
+    let mut value = match serde_yaml::from_str::<Value>(&root.text) {
+        Ok(value) => value,
+        Err(error) => {
+            strict_yaml::reject_duplicate_keys(&root.text).map_err(|error| {
+                SourceDocumentError::source(&root.provenance, error.to_string())
+            })?;
+            return Err(SourceDocumentError::source(
+                &root.provenance,
+                error.to_string(),
+            ));
+        }
+    };
     let mut includes = IncludeState::default();
     let original = root.text.clone();
     prepare_value(

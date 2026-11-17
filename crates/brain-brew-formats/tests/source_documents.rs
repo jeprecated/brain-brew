@@ -876,3 +876,29 @@ fn dictionary_mutations_keep_source_and_resolved_views_synchronized_or_unchanged
     assert_eq!(document.overlay(), &source_before);
     assert_eq!(document.resolved_overlay(), &resolved_before);
 }
+
+#[test]
+fn source_document_duplicate_keys_report_the_strict_duplicate_key_error() {
+    let duplicate_overlay = "id: overlay.translation.da\nkind: translation\nkind: extension\n";
+    let error = OverlaySourceDocument::parse_with_includes(
+        source("overlay.yaml", duplicate_overlay),
+        |request| Ok(load_include(request.target())),
+    )
+    .expect_err("duplicate overlay keys are rejected");
+    let message = error.to_string();
+    assert!(message.contains("duplicate key \"kind\""), "{message}");
+    assert!(!message.contains("duplicate entry"), "{message}");
+
+    let duplicate_deck = deck_source().replace(
+        "  name: Source document\n",
+        "  name: Source document\n  name: Again\n",
+    );
+    let error = CanonicalSourceDocument::parse_with_includes(
+        source("deck.yaml", duplicate_deck),
+        |request| Ok(load_include(request.target())),
+    )
+    .expect_err("duplicate deck keys are rejected");
+    let message = error.to_string();
+    assert!(message.contains("duplicate key \"name\""), "{message}");
+    assert!(!message.contains("duplicate entry"), "{message}");
+}
