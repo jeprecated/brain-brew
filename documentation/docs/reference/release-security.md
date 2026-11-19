@@ -74,16 +74,12 @@ It fails closed for a missing report, an unknown production advisory/license, or
 an exception without an exact ID, owner, expiry, and rationale. Development-only
 findings are reported separately and cannot suppress production findings.
 
-An age-aware lock refresh keeps the documentation build on Docusaurus 3.10.1
-while selecting compatible transitive releases that have been available for at
-least seven days. The remaining npm audit findings are the four explicitly
-listed Docusaurus/Webpack advisory exceptions in that policy. They are not
-suppressed: each is a `release-maintainers`-owned, 2026-08-15 review item. The
-`fast-uri` exception expires after its patched release passes the minimum age;
-the high `GHSA-5c6j-r48x-rmvq` remains blocked by its dated exception and must
-not be renewed without reviewing an upstream-compatible Docusaurus update.
-Legacy npm license metadata exceptions are equally exact and time-bound. Cargo
-currently has no listed advisory or license exception.
+An age-aware lock refresh keeps the documentation build on Docusaurus while
+selecting compatible transitive releases that have been available for at least
+seven days. No npm or Cargo advisory is currently excepted. Legacy npm license
+metadata exceptions are exact, `release-maintainers`-owned, and time-bound to
+the quarterly review date in that policy. Cargo currently has no listed
+license exception.
 
 Release smoke creates CycloneDX 1.5 SBOMs from the produced `.crate`, cargo-dist,
 and Nix binary bytes. Every record carries the observed SHA-256. Release builders
