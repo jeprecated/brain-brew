@@ -12,7 +12,7 @@ publish = false
 [dependencies]
 anyhow = "1"
 tempfile = "3"
-thirtyfour = "0.37"
+thirtyfour = "0.38"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 
 [lints]
