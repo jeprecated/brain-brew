@@ -1616,6 +1616,9 @@ async fn assert_visible_workbench_media(
                     const src = img.currentSrc || img.src || img.getAttribute('src') || '';
                     if (!src || seen.has(src)) continue;
                     seen.add(src);
+                    // Let the element finish loading before reading its state;
+                    // a broken image rejects here and keeps zero dimensions.
+                    await img.decode().catch(() => {});
                     const response = await fetch(src, { cache: 'no-store' });
                     const bytes = await response.arrayBuffer();
                     const prefix = new TextDecoder('utf-8').decode(new Uint8Array(bytes.slice(0, 512)));
