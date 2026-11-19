@@ -89,7 +89,7 @@ jobs:
       - name: Install checksum-verified cargo-dist
         run: scripts/install_cargo_dist.sh "$HOME/.cargo/bin"
       - name: Install pinned keyless signing client
-        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0; documentation/docs/reference/release-security.md
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v3.10.0; documentation/docs/reference/release-security.md
         with:
           cosign-release: v2.5.3
       - name: Fetch plan
@@ -166,7 +166,7 @@ jobs:
       - name: Install checksum-verified cargo-dist
         run: scripts/install_cargo_dist.sh "$HOME/.cargo/bin"
       - name: Install pinned keyless signing client
-        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0; documentation/docs/reference/release-security.md
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v3.10.0; documentation/docs/reference/release-security.md
         with:
           cosign-release: v2.5.3
       - name: Fetch local artifacts
@@ -245,7 +245,7 @@ jobs:
       - name: Install checksum-verified cargo-dist
         run: scripts/install_cargo_dist.sh "$HOME/.cargo/bin"
       - name: Install pinned keyless signing client
-        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0; documentation/docs/reference/release-security.md
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v3.10.0; documentation/docs/reference/release-security.md
         with:
           cosign-release: v2.5.3
       - name: Fetch produced artifacts only
