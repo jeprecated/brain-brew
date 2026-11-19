@@ -24,6 +24,8 @@ in
     pkgs.lld
     pkgs.llvmPackages.llvm
     pkgs.nodejs_24
+    # Release and supply-chain gate scripts in scripts/ need tomllib (3.11+).
+    pkgs.python3
     pkgs.rustc
     pkgs.rustfmt
     pkgs.trunk
