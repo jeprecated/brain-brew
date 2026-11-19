@@ -97,7 +97,7 @@ in
     set -euo pipefail
     cd crates/brain-brew-workbench-ui
     # Keep in sync with scripts/check_workbench_ui_embed.sh.
-    RUSTFLAGS="--remap-path-prefix=''${CARGO_HOME:-$HOME/.cargo}=/cargo" \
+    CARGO_HOME=/tmp/brainbrew-workbench-cargo-home \
       trunk build --release --dist ../brain-brew-cli/assets/workbench --public-url /
   '';
   scripts."workbench-ui-embed-check".exec = "scripts/check_workbench_ui_embed.sh";

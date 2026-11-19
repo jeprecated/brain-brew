@@ -13,9 +13,10 @@ trap cleanup EXIT
 
 (
   cd "$ui_dir"
-  # Keep in sync with devenv.nix workbench-ui-embed: dependency panic paths
-  # must not embed the builder's home directory in the committed wasm.
-  RUSTFLAGS="--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo" \
+  # Keep in sync with devenv.nix workbench-ui-embed. Leptos' wasm_split_helpers
+  # hashes its absolute CARGO_MANIFEST_PATH into the wasm, so the registry must
+  # live at the same absolute path on every builder.
+  CARGO_HOME=/tmp/brainbrew-workbench-cargo-home \
     trunk build --release --dist "$generated_dir" --public-url /
 )
 
