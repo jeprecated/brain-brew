@@ -59,7 +59,7 @@ jobs:
           dist plan --allow-dirty --output-format=json > plan-dist-manifest.json
           echo "manifest=$(jq -c '.' plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
       - name: Upload dist plan
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6; documentation/docs/reference/release-security.md
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v6; documentation/docs/reference/release-security.md
         with:
           name: artifacts-plan-dist-manifest
           path: plan-dist-manifest.json
@@ -136,7 +136,7 @@ jobs:
         with:
           subject-path: ${{ steps.cargo-dist.outputs.artifact-subjects }}
       - name: Upload built artifacts
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6; documentation/docs/reference/release-security.md
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v6; documentation/docs/reference/release-security.md
         with:
           name: artifacts-build-local-${{ join(matrix.targets, '_') }}
           path: |
@@ -209,7 +209,7 @@ jobs:
         with:
           subject-path: ${{ steps.cargo-dist.outputs.artifact-subjects }}
       - name: Upload built artifacts
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6; documentation/docs/reference/release-security.md
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v6; documentation/docs/reference/release-security.md
         with:
           name: artifacts-build-global
           path: |
