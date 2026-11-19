@@ -55,7 +55,7 @@ sha2 = "0.10"
 tar = "0.4"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
-tower-http = { version = "0.6", features = ["fs"] }
+tower-http = { version = "0.7", features = ["fs"] }
 ureq = "2"
 url = "2"
 
