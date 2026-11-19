@@ -164,7 +164,7 @@ jobs:
           evidence_sha256="$(sha256sum target/release-evidence/evidence.json | cut -d ' ' -f 1)"
           echo "evidence-sha256=$evidence_sha256" >> "$GITHUB_OUTPUT"
       - name: Upload cryptographically bound evidence bundle
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6; documentation/docs/reference/release-security.md
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v6; documentation/docs/reference/release-security.md
         with:
           name: quality-evidence-${{ needs.validate-input.outputs.target-sha }}
           path: target/release-evidence
