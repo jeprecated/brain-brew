@@ -79,7 +79,7 @@ jobs:
           submodules: recursive
       # Do not pass a token or cache credential: this same gate executes for
       # untrusted pull requests and has no publication side effects.
-      - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31; documentation/docs/reference/release-security.md
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31; documentation/docs/reference/release-security.md
       - name: Install devenv from this repository's locked nixpkgs input
         run: nix profile add --inputs-from . nixpkgs#devenv
       - name: Run format, tests, lint, and embedded-asset gate
