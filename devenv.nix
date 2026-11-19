@@ -96,7 +96,9 @@ in
   scripts."workbench-ui-embed".exec = ''
     set -euo pipefail
     cd crates/brain-brew-workbench-ui
-    trunk build --release --dist ../brain-brew-cli/assets/workbench --public-url /
+    # Keep in sync with scripts/check_workbench_ui_embed.sh.
+    RUSTFLAGS="--remap-path-prefix=''${CARGO_HOME:-$HOME/.cargo}=/cargo" \
+      trunk build --release --dist ../brain-brew-cli/assets/workbench --public-url /
   '';
   scripts."workbench-ui-embed-check".exec = "scripts/check_workbench_ui_embed.sh";
   # Browser-owned E2E is deliberately prepared outside the deterministic

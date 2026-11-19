@@ -13,7 +13,10 @@ trap cleanup EXIT
 
 (
   cd "$ui_dir"
-  trunk build --release --dist "$generated_dir" --public-url /
+  # Keep in sync with devenv.nix workbench-ui-embed: dependency panic paths
+  # must not embed the builder's home directory in the committed wasm.
+  RUSTFLAGS="--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo" \
+    trunk build --release --dist "$generated_dir" --public-url /
 )
 
 if diff -ruN "$embedded_dir" "$generated_dir"; then
