@@ -132,7 +132,7 @@ jobs:
           cosign sign-blob --yes --bundle "$METADATA_DIR/SHA256SUMS.sigstore.json" "$METADATA_DIR/SHA256SUMS"
           cosign verify-blob --offline --bundle "$METADATA_DIR/SHA256SUMS.sigstore.json" --certificate-identity-regexp "$SIGSTORE_CERTIFICATE_IDENTITY_REGEX" --certificate-oidc-issuer https://token.actions.githubusercontent.com "$METADATA_DIR/SHA256SUMS"
       - name: Keylessly attest produced shipped artifacts
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3; documentation/docs/reference/release-security.md
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v3; documentation/docs/reference/release-security.md
         with:
           subject-path: ${{ steps.cargo-dist.outputs.artifact-subjects }}
       - name: Upload built artifacts
@@ -205,7 +205,7 @@ jobs:
           cosign sign-blob --yes --bundle "$METADATA_DIR/SHA256SUMS.sigstore.json" "$METADATA_DIR/SHA256SUMS"
           cosign verify-blob --offline --bundle "$METADATA_DIR/SHA256SUMS.sigstore.json" --certificate-identity-regexp "$SIGSTORE_CERTIFICATE_IDENTITY_REGEX" --certificate-oidc-issuer https://token.actions.githubusercontent.com "$METADATA_DIR/SHA256SUMS"
       - name: Keylessly attest produced shipped artifacts
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3; documentation/docs/reference/release-security.md
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v3; documentation/docs/reference/release-security.md
         with:
           subject-path: ${{ steps.cargo-dist.outputs.artifact-subjects }}
       - name: Upload built artifacts
